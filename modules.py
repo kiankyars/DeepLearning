@@ -183,17 +183,30 @@ class LayerNormalization:
         out = self.gamma * y + self.beta  # Scale and shift
 
         return out
+    
 
+class SinusoidalPositionalEncoding(nn.Module):
+    '''
+    position: A tensor of shape (max_seq_len, 1) representing positions.
+    div_term: A scaling factor for the sinusoidal functions.
+    pe: The positional encoding matrix of shape (max_seq_len, emb).
+    The encoding is added to the input tensor x.
+    '''
+    def __init__(self, emb, max_seq_len=5000):
+        super().__init__()
+        position = torch.arange(max_seq_len).unsqueeze(1)  # Shape: (max_seq_len, 1)
+        div_term = torch.exp(torch.arange(0, emb, 2) * (-math.log(10000.0) / emb))  # Shape: (emb // 2)
+        pe = torch.zeros(max_seq_len, emb)  # Shape: (max_seq_len, emb)
+        pe[:, 0::2] = torch.sin(position * div_term)  # Even indices: sin
+        pe[:, 1::2] = torch.cos(position * div_term)  # Odd indices: cos
+        self.register_buffer('pe', pe)  # Register as a buffer (not a parameter)
 
-# Example input
-batch_size = 2
-seq_len = 10
-emb_dim = 512
-x = torch.randn(batch_size, seq_len, emb_dim)  # Random input tensor
+    def forward(self, x):
+        """
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, seq_len, emb).
 
-# Create a Transformer block
-transformer_block = TransformerBlock(emb=emb_dim, heads=8, mask=False)
-
-# Forward pass
-output = transformer_block(x)
-print(output.shape)  # Output shape: (batch_size, seq_len, emb_dim)
+        Returns:
+            torch.Tensor: Output tensor with positional encoding added.
+        """
+        return x + self.pe[:x.size(1)]  # Add positional encoding to the input
