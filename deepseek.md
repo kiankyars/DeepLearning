@@ -48,6 +48,7 @@ After dot product	        (batch_size, heads, seq_len, seq_len)
 After softmax	            (batch_size, heads, seq_len, seq_len)
 After applying to values	(batch_size, heads, seq_len, head_dim)
 After swapping back	        (batch_size, seq_len, heads, head_dim)
+After view	                (batch_size, seq_len, emb_dim)
 After unifying heads	    (batch_size, seq_len, emb_dim)
 
 

@@ -2,5 +2,6 @@
 autoregressive transformer (decoder) in simple pytorch
 
 ## TODO:
-pytorch training (do the training on colab, put code here)
-numpy implementation
+- add support for torch.to(devicen)
+- pytorch training (do the training on colab, put code on this repo)
+- numpy implementation
