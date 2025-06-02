@@ -5,13 +5,12 @@ import pickle
 class RegexTokenizer:
     def __init__(self, text=None, vocab_size=None, pattern=None):
         if text is not None and vocab_size is not None:
-            self.text = text
-            self.vocab_size = vocab_size
+            assert vocab_size > 256
             self.merges = {}
             self.vocabulary = {i: bytes([i]) for i in range(256)}
             self.pattern = GPT4_SPLIT_PATTERN if not pattern else pattern
             self.compiled_pattern = re.compile(self.pattern)
-            self.train()
+            self.train(text, vocab_size)
 
     def get_stats(self, ids, stats=None):
         counts = stats if stats is not None else {}
@@ -31,7 +30,7 @@ class RegexTokenizer:
                 i += 1
         return new_ids
 
-    def train(self, verbose=False):
+    def train(self, text, vocab_size, verbose=False):
         '''
         perform BPE over a given text
         by looping over and merging most common pairs
@@ -39,11 +38,11 @@ class RegexTokenizer:
         input: text to tokenize
         output: merges dictionary and vocabulary dictionary
         '''
-        chunks = re.findall(self.compiled_pattern, self.text)
+        chunks = re.findall(self.compiled_pattern, text)
         # for i in range(len(chunks)):
         #     chunks[i] = list(chunks[i].encode('utf-8'))
         encoded_chunks = [chunk.encode('utf-8') for chunk in chunks]
-        num_merges = self.vocab_size - 256
+        num_merges = vocab_size - 256
         # ids = list(tokens) # copy so we don't destroy the original list
         # iterate over merges
         # print(tokens)
