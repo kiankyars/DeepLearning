@@ -1,7 +1,5 @@
 # DeepLearning
-autoregressive transformer (decoder) in simple pytorch
+autoregressive transformer (decoder) re-production of SmolLLM3 with Muon
 
 ## TODO:
-- add support for torch.to(devicen)
-- pytorch training (do the training on colab, put code on this repo)
-- numpy implementation
+- implement with Muon
