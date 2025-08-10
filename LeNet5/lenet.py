@@ -1,12 +1,19 @@
 import numpy as np
+from numpy.lib.stride_tricks import as_strided
 
 class Conv:
     def __init__(self, name, kernel, inc, outc):
+        '''
+        name of layer
+        kernel dimension
+        number of filters in input
+        number of filters in output
+        '''
         self.name = name
         self.kernel = kernel
         self.inc = inc
         self.outc = outc
-        self.weight = np.random.randn(kernel, kernel, inc, outc) * np.sqrt(2.0 / (kernel * kernel * inc)) #msra
+        self.weight = np.random.randn(kernel, kernel, inc, outc)
         self.bias = np.zeros(outc)
         
         # Training parameters
@@ -17,23 +24,19 @@ class Conv:
         self.weight_diff = 0
         self.bias_diff = 0
 
-    def sgd_momentum(self, weight_diff, bias_diff):
-        self.weight_diff = self.momentum * self.weight_diff + (1 - self.momentum) * weight_diff
-        self.bias_diff = self.momentum * self.bias_diff + (1 - self.momentum) * bias_diff
-        return self.weight_diff, self.bias_diff
-
     def forward(self, x):
         self.x = x
         k = self.kernel
-        n, h, w, c = x.shape
-        h_out = h - (k - 1)
-        w_out = w - (k - 1)
-        weight = self.weight.reshape(-1, self.outc)
+        n, h, w, c = x.shape  # batch_size, height, width, channels
+        h_out = h - (k - 1)   # output height after convolution
+        w_out = w - (k - 1)   # output width after convolution
+        weight = self.weight.reshape(self.inc, self.outc)  # reshape kernel to 2D 
         output = np.zeros((n, h_out, w_out, self.outc))
+        
         for i in range(h_out):
             for j in range(w_out):
-                inp = x[:, i:i+k, j:j+k, :].reshape(n, -1)
-                out = inp.dot(weight) + self.bias
+                inp = x[:, i:i+k, j:j+k, :].reshape(n, -1)  # extract patch
+                out = inp.dot(weight) + self.bias            # convolve
                 output[:, i, j, :] = out.reshape(n, -1)
         return output
 
@@ -63,7 +66,6 @@ class Conv:
                 out = diff_out.dot(rotated_weight)
                 back_diff[:, i, j, :] = out.reshape(n, -1)
 
-        weight_diff, bias_diff = self.sgd_momentum(weight_diff, bias_diff)
         self.weight -= self.learning_rate * weight_diff + self.weight_decay * self.weight
         self.bias -= self.learning_rate * bias_diff + self.weight_decay * self.bias
 
@@ -104,11 +106,6 @@ class FC:
         self.weight_diff = 0
         self.bias_diff = 0
 
-    def sgd_momentum(self, weight_diff, bias_diff):
-        self.weight_diff = self.momentum * self.weight_diff + (1 - self.momentum) * weight_diff
-        self.bias_diff = self.momentum * self.bias_diff + (1 - self.momentum) * bias_diff
-        return self.weight_diff, self.bias_diff
-
     def forward(self, x):
         self.origin_shape = x.shape
         if x.ndim == 4:
@@ -124,7 +121,6 @@ class FC:
         #weight = (1024, 10) => (10, 1024), back_diff = (n, 1024)
         back_diff = diff.dot(self.weight.T).reshape(self.origin_shape)
 
-        weight_diff, bias_diff = self.sgd_momentum(weight_diff, bias_diff)
         self.weight -= self.learning_rate * weight_diff + self.weight_decay * self.weight
         self.bias -= self.learning_rate * bias_diff + self.weight_decay * self.bias
         return back_diff
@@ -173,7 +169,7 @@ class LeNet:
         learning_rate_decay = 0.001
         
         for i in range(max_step):
-            x = images[index:index + batch_size] #mini batch sgd
+            x = images[index:index + batch_size]
             y = labels[index:index + batch_size]
             index += batch_size
             index = index % len(images)
