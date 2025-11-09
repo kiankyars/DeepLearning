@@ -1,4 +1,110 @@
+```python
+# ADD: Pattern and regex compilation
+import regex as re
+GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
+
+class RegexTokenizer:
+    def __init__(self, pattern=None):
+        self.pattern = re.compile(pattern or GPT4_SPLIT_PATTERN)
+        # ... rest of init
+
+# MODIFY: train() method
+def train(self, text, vocab_size, verbose=False):
+    # NEW: Split text into chunks first
+    text_chunks = re.findall(self.pattern, text)
+    encoded_chunks = [list(ch.encode('utf-8')) for ch in text_chunks]
+    
+    # CHANGE: Iterate over chunks, not single byte list
+    for i in range(num_merges):
+        stats = {}
+        for chunk_ids in encoded_chunks:
+            get_stats(chunk_ids, stats)  # Count pairs across all chunks
+        pair = max(stats, key=stats.get)
+        # ... merge logic
+        encoded_chunks = [merge(chunk, pair, idx) for chunk in encoded_chunks]
+
+# MODIFY: encode() method  
+def encode(self, text):
+    # NEW: Split into chunks, encode each separately
+    text_chunks = re.findall(self.pattern, text)
+    ids = []
+    for chunk in text_chunks:
+        chunk_bytes = chunk.encode('utf-8')
+        chunk_ids = self._encode_chunk(chunk_bytes)  # Encode chunk independently
+        ids.extend(chunk_ids)
+    return ids
+
+# ADD: Save/load methods
+def save(self, path):
+    with open(path, 'wb') as f:
+        pickle.dump({
+            'merges': self.merges,
+            'vocabulary': self.vocabulary,
+            'pattern': self.pattern.pattern  # Store pattern string
+        }, f)
+
+@classmethod
+def load(cls, path):
+    with open(path, 'rb') as f:
+        data = pickle.load(f)
+    tokenizer = cls()
+    tokenizer.merges = data['merges']
+    tokenizer.vocabulary = data['vocabulary']
+    tokenizer.pattern = re.compile(data['pattern'])
+    return tokenizer
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 """
+  ## Summary of progression
+
+| Step | Tokenizer Type | Training | Inference | Key Addition |
+|------|----------------|----------|-----------|--------------|
+| 1 | BasicTokenizer | Python | Python | Byte-level BPE |
+| 2 | RegexTokenizer | Python | Python | Regex splitting + save/load |
+| 3 | RegexTokenizer + Special | Python | Python | Special token handling |
+| 4 | NanoChatTokenizer | Python | Tiktoken (C) | Tiktoken backend + conversation rendering |
+
+
+Method descriptions (one sentence each)
+__init__(self, enc, bos_token): Initialize with a tiktoken.Encoding and BOS token string, storing both and caching the BOS token ID.
+train_from_iterator(cls, text_iterator, vocab_size): Class method that trains a tokenizer from a text iterator, converts to tiktoken.Encoding, and returns a new instance.
+from_directory(cls, tokenizer_dir): Class method that loads a pickled tiktoken.Encoding from disk and returns a new instance.
+from_pretrained(cls, tiktoken_name): Class method that loads a pretrained tiktoken encoding by name (e.g., "cl100k_base") and returns a new instance.
+get_vocab_size(self): Returns total vocabulary size (regular tokens + special tokens).
+get_special_tokens(self): Returns the set of special token strings.
+id_to_token(self, id): Decodes a single token ID to its string representation.
+encode_special(self, text): Encodes a special token string to its token ID (cached).
+get_bos_token_id(self): Returns the cached BOS token ID integer.
+encode(self, text, prepend=None, append=None, num_threads=8): Encodes text (str or list) to token IDs, with optional prepend/append tokens, using tiktoken for efficiency.
+decode(self, ids): Decodes a list of token IDs back to a Python string.
+save(self, tokenizer_dir): Saves the tiktoken.Encoding object to disk as a pickle file.
+render_conversation(self, conversation, max_tokens=2048): Tokenizes a chat conversation dict into token IDs and a training mask (1 for assistant tokens to predict, 0 otherwise).
+render_for_completion(self, conversation): Tokenizes a conversation for RL, removing the last assistant message and appending <|assistant_start|> to prime generation.
+
+
 SERIES PRINCIPLES
 ==========================
 
@@ -6,11 +112,23 @@ I'm doing this with you so you can learn through my own problem-solving process.
 I will write pseudocode for each function before implementing it.
 I demonstrate everything through small examples.
 I'm going to do this in one take.
-rust, ratio change, constantly shifting
 
 Unlike BasicTokenizer:
-- RegexTokenizer handles an optional regex splitting pattern.
-- RegexTokenizer handles optional special tokens.
+1. Add regex pattern splitting (GPT-4 style)
+2. Split text into chunks before training
+3. Train on chunks separately (no cross-chunk merging)
+4. Add `save()` and `load()` methods
+5. improved merge function
+
+Key idea: Regex splits text into categories (words, numbers, punctuation) before BPE, preventing cross-category merges.
+Why GPT-4 uses regex splitting
+    Tokens are more useful for the model.
+    Better generalization.
+    Easier to interpret.
+
+
+
+
 """
 
 def get_pairs(ids):
