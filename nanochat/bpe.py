@@ -99,7 +99,7 @@ class RegexTokenizer:
         
         text_chunks = re.findall(self.pattern, text)
         encoded_chunks = [list(text_chunk.encode('utf-8')) for text_chunk in text_chunks]
-        length_initial = len(encoded_chunks)
+        length_initial = sum([len(encoded_chunk) for encoded_chunk in encoded_chunks])
 
         for i in range(number_merges):
             pairs = {}
@@ -110,9 +110,13 @@ class RegexTokenizer:
             encoded_chunks = [merge(encoded_chunk, pair, index) for encoded_chunk in encoded_chunks]
             self.merges[pair] = index
             self.vocabulary[index] = self.vocabulary[pair[0]] + self.vocabulary[pair[1]]
+            # print(sorted([(v,k) for k,v in pairs.items()], reverse=True)[:10])
+            # return
+        print([(k,v)for k, v in  self.vocabulary.items()][355:])
+
 
         if verbose:
-            length_final = len(encoded_chunks)
+            length_final = sum([len(encoded_chunk) for encoded_chunk in encoded_chunks])
             compression = length_initial/length_final
             print(length_initial, length_final)
             print(compression)
@@ -173,7 +177,7 @@ class RegexTokenizer:
 
     @classmethod
     def load(cls, path):
-        tokenizer = cls()
+        tokenizer = cls(300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
         with open(path, "rb") as f:
             data = pickle.load(f)
             tokenizer.merges = data["merges"]
@@ -183,13 +187,17 @@ class RegexTokenizer:
 
 
 text = "Ｕｎｉｃｏｄｅ! 🅤🅝🅘🅒🅞🅓🅔‽ 🇺‌🇳‌🇮‌🇨‌🇴‌🇩‌🇪! 😄 The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to “support Unicode” in our software (whatever that means—like using wchar_t for all the strings, right?). But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don’t blame programmers for still finding the whole thing mysterious, even 30 years after Unicode’s inception."
-tokenizer = BasicTokenizer(300)
+tokenizer = RegexTokenizer(300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
 tokenizer.train(text, True)
-tokenizer = BasicTokenizer(259)
-tokenizer.train(text, True)
+# tokenizer.save("/Users/kian/Code/DeepLearning/nanochat/tokenizer.pkl")
+tokenizer_load = tokenizer.load("/Users/kian/Code/DeepLearning/nanochat/tokenizer.pkl")
+
+print(tokenizer_load.decode(tokenizer_load.encode('are hello')))
+
+# tokenizer = RegexTokenizer(259, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+# tokenizer.train(text, True)
 # print(tokenizer.encode('are hello'))
 # print(list('are hello'.encode('utf-8')))
-# print(tokenizer.decode(tokenizer.encode('are hello')))
 # print(tokenizer.merges)
 
 # print(tokenizer.decode([239, 188, 181, 239, 189, 142, 239, 189, 137, 239, 189, 131, 239, 189, 143, 239, 189, 132, 239, 189, 133, 33, 32, 263, 164, 263, 157, 263, 152, 263, 146, 263, 158, 263, 147, 263, 148, 258, 189]))
