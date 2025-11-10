@@ -1,82 +1,3 @@
-```python
-# ADD: Pattern and regex compilation
-import regex as re
-GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
-
-class RegexTokenizer:
-    def __init__(self, pattern=None):
-        self.pattern = re.compile(pattern or GPT4_SPLIT_PATTERN)
-        # ... rest of init
-
-# MODIFY: train() method
-def train(self, text, vocab_size, verbose=False):
-    # NEW: Split text into chunks first
-    text_chunks = re.findall(self.pattern, text)
-    encoded_chunks = [list(ch.encode('utf-8')) for ch in text_chunks]
-    
-    # CHANGE: Iterate over chunks, not single byte list
-    for i in range(num_merges):
-        stats = {}
-        for chunk_ids in encoded_chunks:
-            get_stats(chunk_ids, stats)  # Count pairs across all chunks
-        pair = max(stats, key=stats.get)
-        # ... merge logic
-        encoded_chunks = [merge(chunk, pair, idx) for chunk in encoded_chunks]
-
-# MODIFY: encode() method  
-def encode(self, text):
-    # NEW: Split into chunks, encode each separately
-    text_chunks = re.findall(self.pattern, text)
-    ids = []
-    for chunk in text_chunks:
-        chunk_bytes = chunk.encode('utf-8')
-        chunk_ids = self._encode_chunk(chunk_bytes)  # Encode chunk independently
-        ids.extend(chunk_ids)
-    return ids
-
-# ADD: Save/load methods
-def save(self, path):
-    with open(path, 'wb') as f:
-        pickle.dump({
-            'merges': self.merges,
-            'vocabulary': self.vocabulary,
-            'pattern': self.pattern.pattern  # Store pattern string
-        }, f)
-
-@classmethod
-def load(cls, path):
-    with open(path, 'rb') as f:
-        data = pickle.load(f)
-    tokenizer = cls()
-    tokenizer.merges = data['merges']
-    tokenizer.vocabulary = data['vocabulary']
-    tokenizer.pattern = re.compile(data['pattern'])
-    return tokenizer
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 """
   ## Summary of progression
 
@@ -125,14 +46,15 @@ Why GPT-4 uses regex splitting
     Tokens are more useful for the model.
     Better generalization.
     Easier to interpret.
-
-
-
-
 """
 
-def get_pairs(ids):
-    counts = {}
+
+# TODO: COMPARE mergeing W/ AND W/O CHUNKING
+
+import regex as re
+import pickle
+
+def get_pairs(ids, counts):
     for pair in zip(ids, ids[1:]):
         counts[pair] = counts.get(pair, 0) + 1
     return counts
@@ -157,11 +79,12 @@ def merge(ids, pair, index):
             i += 1
     return new_ids
 
-class BasicTokenizer:
-    def __init__(self, vocab_size):
+class RegexTokenizer:
+    def __init__(self, vocab_size, pattern):
         self.vocab_size = vocab_size
         self.vocabulary = {i: bytes([i]) for i in range(256)}
         self.merges = {}
+        self.pattern = re.compile(r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
     def train(self, text, verbose=False):
         # encode the text
         # iterate over text, self.vocab_size - 256 times
@@ -171,20 +94,25 @@ class BasicTokenizer:
         # add that token to the vocab
         # {256: byte_string}
         # add to self.merges = {byte_string: 256}
-        assert self.vocab_size > 256
+        assert self.vocab_size >= 256
         number_merges = self.vocab_size - 256
-        byte_strings = text.encode('utf-8')
-        ids = list(byte_strings)
-        length_initial = len(ids)
+        
+        text_chunks = re.findall(self.pattern, text)
+        encoded_chunks = [list(text_chunk.encode('utf-8')) for text_chunk in text_chunks]
+        length_initial = len(encoded_chunks)
+
         for i in range(number_merges):
-            pairs = get_pairs(ids)
+            pairs = {}
+            for encoded_chunk in encoded_chunks:
+                get_pairs(encoded_chunk, pairs)
             pair = max(pairs, key=pairs.get)
             index = 256 + i
-            ids = merge(ids, pair, index)
+            encoded_chunks = [merge(encoded_chunk, pair, index) for encoded_chunk in encoded_chunks]
             self.merges[pair] = index
             self.vocabulary[index] = self.vocabulary[pair[0]] + self.vocabulary[pair[1]]
+
         if verbose:
-            length_final = len(ids)
+            length_final = len(encoded_chunks)
             compression = length_initial/length_final
             print(length_initial, length_final)
             print(compression)
@@ -195,6 +123,14 @@ class BasicTokenizer:
         # print(sorted(pairs.items(),reverse=True,key=lambda k: pairs[k])[:10])
         
     def encode(self, text):
+        text_chunks = re.findall(self.pattern, text)
+        encoded_text = []
+        for text_chunk in text_chunks:
+            encoded_chunk = self._encode_chunk(text_chunk)
+            encoded_text.extend(encoded_chunk)
+        return encoded_text
+    
+    def _encode_chunk(self, text):
         '''
         self.merges is important here
         
@@ -204,19 +140,8 @@ class BasicTokenizer:
         possible under the trained tokenizer have been completed
         '''
         ids = list(text.encode('utf-8'))
-        while len(ids) > 1:
-            pairs = get_pairs(ids)
-            '''
-            pairs is a dictionary of tuples which tells us the frequency of each pair in the text to be encoded
-            we dont' care about the frequency here, because we are not training
-            we want to find the pair with the minimnunm index, THAT WAS MERGED
-            key will take the key of pairs (which is the pair) we compare that pair against self.merges
-            (32,32)
-            '''
-            pair = min(pairs, key=lambda p: self.merges.get(p, float('inf')))
-            if pair not in self.merges:
-                break
-            ids =  merge(ids, pair, self.merges[pair])
+        for pair, index in self.merges.items():
+            ids = merge(ids, pair, index)
         return ids
 
 
@@ -237,12 +162,34 @@ class BasicTokenizer:
         decoded_text = byte_strings.decode('utf-8')
         return decoded_text
 
-tokenizer = BasicTokenizer(300)
+    def save(self, path):
+        with open(path, "wb") as f:
+            pickle.dump({
+                "merges":self.merges,
+                "vocabulary":self.vocabulary,
+                "pattern":self.pattern.pattern
+            },
+            f)
+
+    @classmethod
+    def load(cls, path):
+        tokenizer = cls()
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+            tokenizer.merges = data["merges"]
+            tokenizer.vocabulary = data["vocabulary"]
+            tokenizer.pattern = data["pattern"]
+        return tokenizer
+
+
 text = "Ｕｎｉｃｏｄｅ! 🅤🅝🅘🅒🅞🅓🅔‽ 🇺‌🇳‌🇮‌🇨‌🇴‌🇩‌🇪! 😄 The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to “support Unicode” in our software (whatever that means—like using wchar_t for all the strings, right?). But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don’t blame programmers for still finding the whole thing mysterious, even 30 years after Unicode’s inception."
-tokenizer.train(text, False)
-print(tokenizer.encode('are hello'))
-print(list('are hello'.encode('utf-8')))
-print(tokenizer.decode(tokenizer.encode('are hello')))
+tokenizer = BasicTokenizer(300)
+tokenizer.train(text, True)
+tokenizer = BasicTokenizer(259)
+tokenizer.train(text, True)
+# print(tokenizer.encode('are hello'))
+# print(list('are hello'.encode('utf-8')))
+# print(tokenizer.decode(tokenizer.encode('are hello')))
 # print(tokenizer.merges)
 
 # print(tokenizer.decode([239, 188, 181, 239, 189, 142, 239, 189, 137, 239, 189, 131, 239, 189, 143, 239, 189, 132, 239, 189, 133, 33, 32, 263, 164, 263, 157, 263, 152, 263, 146, 263, 158, 263, 147, 263, 148, 258, 189]))

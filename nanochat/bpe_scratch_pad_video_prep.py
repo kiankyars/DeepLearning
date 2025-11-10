@@ -5,18 +5,11 @@ We also have to register special tokens in the init method both with the ID to p
 In the decode method, we have to iterate over the IDs, and there are three conditions. Either the IED is in the vocabulary, in which case we just index that IED in the vocabulary and add it to a list called byte parts which is just a list of the byte strings that we will then use a binary join to concatenate and then if not uh We check if it's in the inverse special tokens which maps from the byte strings or the strings themselves rather to the IDs and because it's strings to IDs then it'll just The in statement will check the strings, not the IDs, because by default it just it just checks the keys. And then if that string is the key... Oh sorry, I just mixed it up. Okay, so the inverse is actually from IDs to strings and the special tokens normally is from strings to IDs So if it's from IDs to strings, then we will index the inverse special tokens by the index that will give us the string and we'll add that to our byte part list. Else we raise a value error saying invalid token ID and at that point that error will just propagate to the base function call and your program will terminate with an error. And then once this list is made, we will join it with the binary join function for Python byte strings and then simply decode that byte string. And you can also put a errors equals replace, which will ignore errors, I guess.
  You then have to have a separate encoding function as well because you don't want to actually encode the special tokens because they're special tokens and if you encode them with UTF-8, then that's not what is in the corresponding dictionary and it won't be fun. But now that I think about it, like yeah, I I don't think I don't think it's a good idea.
 
-- Video 1: BasicTokenizer → RegexTokenizer
-  - Regex splitting concept
-  - Modify training loop
-  - Add save/load
-  - Demo: compression ratio improvement
+
 Show compression ratio is similar or slightly worse.
 Show token quality improvement: word-aligned tokens, clearer subwords, better generalization.
 Slightly worse compression is an acceptable trade-off.
-
-, ratio change, 
-We are going to do the train encoder from scratch not in rust and tiktoken back-end for inference (show nanochat code)
-constantly shifting
+show save load functionaily
 
 
 
