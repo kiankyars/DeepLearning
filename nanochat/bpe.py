@@ -34,22 +34,7 @@ I will write pseudocode for each function before implementing it.
 I demonstrate everything through small examples.
 I'm going to do this in one take.
 
-Unlike BasicTokenizer:
-1. Add regex pattern splitting (GPT-4 style)
-2. Split text into chunks before training
-3. Train on chunks separately (no cross-chunk merging)
-4. Add `save()` and `load()` methods
-5. improved merge function
-
-Key idea: Regex splits text into categories (words, numbers, punctuation) before BPE, preventing cross-category merges.
-Why GPT-4 uses regex splitting
-    Tokens are more useful for the model.
-    Better generalization.
-    Easier to interpret.
 """
-
-
-# TODO: COMPARE mergeing W/ AND W/O CHUNKING
 
 import regex as re
 import pickle
