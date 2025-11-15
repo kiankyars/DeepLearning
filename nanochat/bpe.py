@@ -34,6 +34,22 @@ I will write pseudocode for each function before implementing it.
 I demonstrate everything through small examples.
 I'm going to do this in one take.
 
+Why?
+Add register_special_tokens() method
+Reserve space for special tokens during training
+Modify encode() to handle special tokens in text
+Modify decode() to handle special token IDs
+Add encode_special() helper method
+Demo: encode text with special tokens
+
+f you want to show special tokens, do it at the end of Video 3: "Here's how you could add special tokens to the Python tokenizer, but we don't need to since tiktoken handles it."
+This aligns with nanochat’s approach: special tokens are added when creating the tiktoken.Encoding, not during Python training.
+
+Why store BOS token id as a class member (one‑liner for your video)
+We store the BOS id because render_conversation must always prepend a single, known document delimiter at runtime; different encodings use different literal tokens ("<|bos|>" vs "<|endoftext|>"), so the tokenizer needs the concrete id to insert quickly and deterministically. In short: it’s the one special token the runtime always needs and must be mapped correctly across encodings.
+
+TL;DR: The parameter handles different token names ("<|bos|>" vs "<|endoftext|>"). Storing the ID is a convenience, not a requirement.
+
 """
 
 import regex as re
