@@ -1,29 +1,17 @@
 """
-  ## Summary of progression
-
-| Step | Tokenizer Type | Training | Inference | Key Addition |
-|------|----------------|----------|-----------|--------------|
-| 1 | BasicTokenizer | Python | Python | Byte-level BPE |
-| 2 | RegexTokenizer | Python | Python | Regex splitting + save/load |
-| 3 | RegexTokenizer + Special | Python | Python | Special token handling |
-| 4 | NanoChatTokenizer | Python | Tiktoken (C) | Tiktoken backend + conversation rendering |
-
-
-
-
 Method descriptions
 
-from_directory(cls, tokenizer_dir): Class method that loads a pickled tiktoken.Encoding from disk and returns a new instance.
+save(self, tokenizer_dir): Saves the tiktoken.Encoding object to disk as a pickle file.
 
-from_pretrained(cls, tiktoken_name): Class method that loads a pretrained tiktoken encoding by name (e.g., "cl100k_base") and returns a new instance.
+# In other words load. This is just the way it's called for factory methods.
+@classmethod
+from_directory(cls, tokenizer_dir): Class method that loads a pickled tiktoken.Encoding from disk and returns a new instance.
 
 get_vocab_size(self): Returns total vocabulary size (regular tokens + special tokens).
 
 get_special_tokens(self): Returns the set of special token strings.
 
-id_to_token(self, id): Decodes a single token ID to its string representation.
-
-save(self, tokenizer_dir): Saves the tiktoken.Encoding object to disk as a pickle file.
+from_pretrained(cls, tiktoken_name): Class method that loads a pretrained tiktoken encoding by name (e.g., "cl100k_base") and returns a new instance.
 
 render_conversation(self, conversation, max_tokens=2048): Tokenizes a chat conversation dict into token IDs and a training mask (1 for assistant tokens to predict, 0 otherwise).
 
@@ -39,10 +27,9 @@ I demonstrate everything through small examples.
 I'm going to do this in one take.
 
 """
-
-from re import I
 import regex as re
 import pickle
+import os
 
 def get_pairs(ids, counts):
     for pair in zip(ids, ids[1:]):
@@ -285,7 +272,61 @@ class NanoChatTokenizer:
         return self.enc.decode(ids)
     def __call__(self, *args, **kwargs):
         return self.encode(*args, **kwargs)
+
+    @classmethod
+    def from_pretrained(cls, tiktoken_name):
+        enc = tiktoken.get_encoding(tiktoken_name)
+        return cls(enc, "<|endoftext|>")
+
+    def save(self, tokenizer_dir):
+        os.makedirs(tokenizer_dir, exist_ok=True)
+        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
+        with open(pickle_path, "wb") as f:
+            pickle.dump(self.enc,f)
+
+    @classmethod
+    def from_directory(cls, tokenizer_dir):
+        pickle_path = os.path.join(tokenizer_dir, "tokenizer.pkl")
+        with open(pickle_path, "rb") as f:
+            enc = pickle.load(f)
+        return cls(enc, "<|bos|>")
     
+    def get_vocab_size(self):
+        return self.enc.n_vocab
+
+    def get_special_tokens(self):
+        return self.enc.special_tokens_set
+
+    def render_conversation(self, conversation, max_tokens=2048):
+        pass
+        # - Chat format: `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`
+
+        conversation = {
+            "messages": [
+                {"role": "user", "content": "Hello!"},
+                {"role": "assistant", "content": "Hi there!"}
+            ]
+        }
+
+        # Should produce:
+        # list= [<|bos|>, <|user_start|>, "Hello!", <|user_end|>, 
+        # <|assistant_start|>, "Hi there!", <|assistant_end|>]
+        # With mask: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0]
+
+        Model generates: <|python_start|> 'hello'.count('l') <|python_end|>
+        System executes the code: use_calculator(expr)
+        System forces the result: <|output_start|> 2 <|output_end|>
+        Model continues generating after the output
+
+        # Training data:
+        {"type": "python", "text": "123 + 456"}      # mask=1 (model predicts this)
+        {"type": "python_output", "text": "579"}     # mask=0 (system provides this)
+
+        # At inference:
+        # Model predicts: "<|python_start|> 123 + 456 <|python_end|>"
+        # System runs it: result = 579
+        # System injects: "<|output_start|> 579 <|output_end|>"
+
 text = r"""
 (Washington, D.C., July 9, 2025)- Yesterday, Mexico’s National Service of Agro-Alimentary Health, Safety, and Quality (SENASICA) reported a new case of New World Screwworm (NWS) in Ixhuatlan de Madero, Veracruz in Mexico, which is approximately 160 miles northward of the current sterile fly dispersal grid, on the eastern side of the country and 370 miles south of the U.S./Mexico border. This new northward detection comes approximately two months after northern detections were reported in Oaxaca and Veracruz, less than 700 miles away from the U.S. border, which triggered the closure of our ports to Mexican cattle, bison, and horses on May 11, 2025.
 
@@ -293,10 +334,25 @@ While USDA announced a risk-based phased port re-opening strategy for cattle, bi
 
 “The United States has promised to be vigilant — and after detecting this new NWS case, we are pausing the planned port reopening’s to further quarantine and target this deadly pest in Mexico. We must see additional progress combatting NWS in Veracruz and other nearby Mexican states in order to reopen livestock ports along the Southern border,” said U.S. Secretary of Agriculture Brooke L. Rollins. “Thanks to the aggressive monitoring by USDA staff in the U.S. and in Mexico, we have been able to take quick and decisive action to respond to the spread of this deadly pest.”
 """.strip()
-tokenizer = NanoChatTokenizer.train_from_iterator(text, 300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+tokenizer1 = NanoChatTokenizer.train_from_iterator(text, 300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+
+tokenizer1.save("./nanochat")
+
+print(tokenizer1.get_vocab_size())
+
+tokenizer = NanoChatTokenizer.from_directory("./nanochat")
 
 print(tokenizer.encode('Hello') == tokenizer('Hello'))
 
 print(tokenizer('Hello I am so happy today'))
 
 print(tokenizer.decode(tokenizer("hello")))
+
+
+    
+
+gpt2= NanoChatTokenizer.from_pretrained("gpt2")
+
+print(gpt2.get_special_tokens(), gpt2.get_vocab_size())
+# print((gpt2.enc.special_tokens_set.pop()))
+# print(gpt2.encode_special(gpt2.enc.special_tokens_set.pop()))

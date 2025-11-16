@@ -15,14 +15,6 @@ def from_directory(cls, tokenizer_dir):
     return cls(enc, "<|bos|>")
 
 # **Demo**: Save tokenizer, load it back, verify encode/decode works.
-@classmethod
-def from_pretrained(cls, tiktoken_name):
-    """Load pretrained tiktoken (e.g., 'cl100k_base' for GPT-4)."""
-    enc = tiktoken.get_encoding(tiktoken_name)
-    # Pretrained uses "<|endoftext|>" not "<|bos|>"
-    return cls(enc, "<|endoftext|>")
-
-# **Demo**: Compare vocab sizes (GPT-2 vs GPT-4 vs yours)
 
 #### **1.3 Info getters**
 def get_vocab_size(self):
@@ -32,10 +24,18 @@ def get_special_tokens(self):
     return self.enc.special_tokens_set
 
 # **Demo**: Print vocab size, list special tokens
+@classmethod
+def from_pretrained(cls, tiktoken_name):
+    """Load pretrained tiktoken (e.g., 'cl100k_base' for GPT-4)."""
+    enc = tiktoken.get_encoding(tiktoken_name)
+    # Pretrained uses "<|endoftext|>" not "<|bos|>"
+    return cls(enc, "<|endoftext|>")
 
-### **Part 2: Conversation rendering (10-12 min)**
+# **Demo**: Compare vocab sizes (GPT-2 vs GPT-4 vs yours)
 
-#### **2.1 Conceptual explanation (3-4 min)**
+# **Part 2: Conversation rendering (10-12 min)**
+
+# **2.1 Conceptual explanation (3-4 min)**
 
 # Explain the problem:
 # - Chat format: `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`
@@ -43,19 +43,36 @@ def get_special_tokens(self):
 # - Special tokens: `<|user_start|>`, `<|user_end|>`, `<|assistant_start|>`, `<|assistant_end|>`
 
 # Show example:
-# ```python
-# conversation = {
-#     "messages": [
-#         {"role": "user", "content": "Hello!"},
-#         {"role": "assistant", "content": "Hi there!"}
-#     ]
-# }
+conversation = {
+    "messages": [
+        {"role": "user", "content": "Hello!"},
+        {"role": "assistant", "content": "Hi there!"}
+    ]
+}
 
 # Should produce:
-# [<|bos|>, <|user_start|>, "Hello!", <|user_end|>, 
-#  <|assistant_start|>, "Hi there!", <|assistant_end|>]
+# list= [<|bos|>, <|user_start|>, "Hello!", <|user_end|>, 
+# <|assistant_start|>, "Hi there!", <|assistant_end|>]
 # With mask: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0]
-#            (only assistant content is masked = 1)
+# (only assistant content is masked = 1)
+# - Why this works:
+# - The model sees user text as context, so it can condition on it.
+# - The model only learns to predict assistant tokens, which is the goal.
+
+# Model generates: <|python_start|> 'hello'.count('l') <|python_end|>
+# System executes the code: use_calculator(expr)
+# System forces the result: <|output_start|> 2 <|output_end|>
+# Model continues generating after the output
+
+# Training data:
+{"type": "python", "text": "123 + 456"}      # mask=1 (model predicts this)
+{"type": "python_output", "text": "579"}     # mask=0 (system provides this)
+
+# At inference:
+# Model predicts: "<|python_start|> 123 + 456 <|python_end|>"
+# System runs it: result = 579
+# System injects: "<|output_start|> 579 <|output_end|>"
+# Model continues: (sees the output, continues reasoning)
 
 #### **2.4 render_for_completion() (2 min)**
 
@@ -72,6 +89,18 @@ def render_for_completion(self, conversation):
     return ids
 
 # **Demo**: Show before/after - conversation with answer, then primed for generation.
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### **Part 3: Convenience functions (3-5 min)**
 
@@ -101,3 +130,5 @@ def get_token_bytes(device="cpu"):
 # Purpose: Loads a precomputed tensor `token_bytes[vocab_size]` where `token_bytes[token_id]` = number of bytes that token represents (0 for special tokens).
 
 # This normalizes by actual byte length, so you can compare tokenizers with different vocab sizes.
+
+# key-insight: bytes are the invariant—both tokenizers compress the same original bytes, so normalize by that.
