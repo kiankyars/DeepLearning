@@ -9,20 +9,24 @@
 | 4 | NanoChatTokenizer | Python | Tiktoken (C) | Tiktoken backend + conversation rendering |
 
 
-Method descriptions (one sentence each)
-__init__(self, enc, bos_token): Initialize with a tiktoken.Encoding and BOS token string, storing both and caching the BOS token ID.
-train_from_iterator(cls, text_iterator, vocab_size): Class method that trains a tokenizer from a text iterator, converts to tiktoken.Encoding, and returns a new instance.
+
+
+Method descriptions
+
 from_directory(cls, tokenizer_dir): Class method that loads a pickled tiktoken.Encoding from disk and returns a new instance.
+
 from_pretrained(cls, tiktoken_name): Class method that loads a pretrained tiktoken encoding by name (e.g., "cl100k_base") and returns a new instance.
+
 get_vocab_size(self): Returns total vocabulary size (regular tokens + special tokens).
+
 get_special_tokens(self): Returns the set of special token strings.
+
 id_to_token(self, id): Decodes a single token ID to its string representation.
-encode_special(self, text): Encodes a special token string to its token ID (cached).
-get_bos_token_id(self): Returns the cached BOS token ID integer.
-encode(self, text, prepend=None, append=None, num_threads=8): Encodes text (str or list) to token IDs, with optional prepend/append tokens, using tiktoken for efficiency.
-decode(self, ids): Decodes a list of token IDs back to a Python string.
+
 save(self, tokenizer_dir): Saves the tiktoken.Encoding object to disk as a pickle file.
+
 render_conversation(self, conversation, max_tokens=2048): Tokenizes a chat conversation dict into token IDs and a training mask (1 for assistant tokens to predict, 0 otherwise).
+
 render_for_completion(self, conversation): Tokenizes a conversation for RL, removing the last assistant message and appending <|assistant_start|> to prime generation.
 
 
@@ -34,24 +38,9 @@ I will write pseudocode for each function before implementing it.
 I demonstrate everything through small examples.
 I'm going to do this in one take.
 
-Why?
-Add register_special_tokens() method
-Reserve space for special tokens during training
-Modify encode() to handle special tokens in text
-Modify decode() to handle special token IDs
-Add encode_special() helper method
-Demo: encode text with special tokens
-
-f you want to show special tokens, do it at the end of Video 3: "Here's how you could add special tokens to the Python tokenizer, but we don't need to since tiktoken handles it."
-This aligns with nanochat’s approach: special tokens are added when creating the tiktoken.Encoding, not during Python training.
-
-Why store BOS token id as a class member (one‑liner for your video)
-We store the BOS id because render_conversation must always prepend a single, known document delimiter at runtime; different encodings use different literal tokens ("<|bos|>" vs "<|endoftext|>"), so the tokenizer needs the concrete id to insert quickly and deterministically. In short: it’s the one special token the runtime always needs and must be mapped correctly across encodings.
-
-TL;DR: The parameter handles different token names ("<|bos|>" vs "<|endoftext|>"). Storing the ID is a convenience, not a requirement.
-
 """
 
+from re import I
 import regex as re
 import pickle
 
@@ -81,12 +70,11 @@ def merge(ids, pair, index):
     return new_ids
 
 class RegexTokenizer:
-    def __init__(self, vocab_size, pattern):
-        self.vocab_size = vocab_size
+    def __init__(self, pattern):
         self.vocabulary = {i: bytes([i]) for i in range(256)}
         self.merges = {}
         self.pattern = re.compile(r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
-    def train(self, text, verbose=False):
+    def train(self, text, vocab_size_no_special, verbose=False):
         # encode the text
         # iterate over text, self.vocab_size - 256 times
         # count all of the pairs in a dictionary
@@ -95,8 +83,7 @@ class RegexTokenizer:
         # add that token to the vocab
         # {256: byte_string}
         # add to self.merges = {byte_string: 256}
-        assert self.vocab_size >= 256
-        number_merges = self.vocab_size - 256
+        number_merges = vocab_size_no_special - 256
         
         text_chunks = re.findall(self.pattern, text)
         encoded_chunks = [list(text_chunk.encode('utf-8')) for text_chunk in text_chunks]
@@ -188,17 +175,128 @@ class RegexTokenizer:
 
 
 text = "Ｕｎｉｃｏｄｅ! 🅤🅝🅘🅒🅞🅓🅔‽ 🇺‌🇳‌🇮‌🇨‌🇴‌🇩‌🇪! 😄 The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to “support Unicode” in our software (whatever that means—like using wchar_t for all the strings, right?). But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don’t blame programmers for still finding the whole thing mysterious, even 30 years after Unicode’s inception."
-tokenizer = RegexTokenizer(300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
-tokenizer.train(text, True)
+
+# tokenizer = RegexTokenizer(300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+# tokenizer.train(text, True)
 # tokenizer.save("/Users/kian/Code/DeepLearning/nanochat/tokenizer.pkl")
-tokenizer_load = tokenizer.load("/Users/kian/Code/DeepLearning/nanochat/tokenizer.pkl")
-
-print(tokenizer_load.decode(tokenizer_load.encode('are hello')))
-
+# tokenizer_load = tokenizer.load("/Users/kian/Code/DeepLearning/nanochat/tokenizer.pkl")
+# print(tokenizer_load.decode(tokenizer_load.encode('are hello')))
 # tokenizer = RegexTokenizer(259, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
 # tokenizer.train(text, True)
 # print(tokenizer.encode('are hello'))
 # print(list('are hello'.encode('utf-8')))
 # print(tokenizer.merges)
-
 # print(tokenizer.decode([239, 188, 181, 239, 189, 142, 239, 189, 137, 239, 189, 131, 239, 189, 143, 239, 189, 132, 239, 189, 133, 33, 32, 263, 164, 263, 157, 263, 152, 263, 146, 263, 158, 263, 147, 263, 148, 258, 189]))
+
+SPECIAL_TOKENS = [
+    # every document begins with the Beginning of Sequence (BOS) token that delimits documents
+    "<|bos|>",
+    # tokens below are only used during finetuning to render Conversations into token ids
+    "<|user_start|>", # user messages
+    "<|user_end|>",
+    "<|assistant_start|>", # assistant messages
+    "<|assistant_end|>",
+    "<|python_start|>", # assistant invokes python REPL tool
+    "<|python_end|>",
+    "<|output_start|>", # python REPL outputs back to assistant
+    "<|output_end|>",
+]
+
+import tiktoken
+from functools import lru_cache
+
+def get_mergeable_ranks(tokenizer):
+    # add base 256 strings
+    mergeable_ranks = {}
+    for i in range(256):
+        mergeable_ranks[bytes([i])] = i
+    # add merges tokens in the order they were made and with the bytes, not the int pairs, as is the case in self.merges
+    token_bytes = {i: bytes([i]) for i in range(256)}
+    for (pair, merged_index) in tokenizer.merges.items():
+        merges_bytes = token_bytes[pair[0]] + token_bytes[pair[1]]
+        token_bytes[merged_index] = merges_bytes
+        mergeable_ranks[merges_bytes] = merged_index
+    return mergeable_ranks
+
+
+class NanoChatTokenizer:
+    def __init__(self, enc, bos_token) -> None:
+        self.enc = enc
+        self.bos_token_id = self.encode_special(bos_token)
+
+    
+    def __repr__(self) -> str:
+        return self.enc.name
+
+    @classmethod
+    def train_from_iterator(cls, text, vocab_size, pattern):
+        # Step 1 train python tokenizer use regextokenizer, then throw it out!
+        # self.merges() is all we want and need from the tokenizer training
+        # Step 2 convert self.merges to mergeable_ranks
+        # self. merges is a mapping from pairs to indices, 
+        # but mergeable_ranks is the opposite
+        # step 3. add special tokens
+        # step4 create and return the tiktoken.encoding object
+        tokenizer = RegexTokenizer(pattern)
+        vocab_size_no_special = vocab_size - len(SPECIAL_TOKENS)
+        assert vocab_size_no_special >= 256
+        tokenizer.train(text, vocab_size_no_special)
+        mergable_ranks = get_mergeable_ranks(tokenizer)
+        tokens_offset = len(mergable_ranks)
+        special_tokens = {
+            token: tokens_offset + i
+            for i, token in enumerate(SPECIAL_TOKENS)
+        }
+        enc = tiktoken.Encoding(
+            name="nanochat",
+            pat_str=pattern,
+            mergeable_ranks=mergable_ranks,
+            special_tokens=special_tokens
+        )
+        return cls(enc, "<|bos|>")
+
+    @lru_cache(maxsize=32)
+    def encode_special(self, text):
+        return self.enc.encode_single_token(text)
+
+    def encode(self, text, prepend=None, append=None, num_threads=8):
+        if prepend is not None:
+            prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)
+        if append is not None:
+            append_id = append if isinstance(append, int) else self.encode_special(append)
+        if isinstance(text, str):
+            ids = self.enc.encode_ordinary(text)
+            if prepend is not None:
+                ids.insert(0, prepend_id)
+            if append is not None:
+                ids.append(append_id)
+        elif isinstance(text, list):
+            ids = self.enc.encode_ordinary_batch(text, num_threads)
+            if prepend is not None:
+                for i in ids:
+                    i.insert(0, prepend_id)
+            if append is not None:
+                for j in ids:
+                    j.append(append_id)
+        else:
+            raise ValueError(f"invalid input type: {type(text)}")
+        return ids
+    def decode(self, ids):
+        return self.enc.decode(ids)
+    def __call__(self, *args, **kwargs):
+        return self.encode(*args, **kwargs)
+    
+text = r"""
+(Washington, D.C., July 9, 2025)- Yesterday, Mexico’s National Service of Agro-Alimentary Health, Safety, and Quality (SENASICA) reported a new case of New World Screwworm (NWS) in Ixhuatlan de Madero, Veracruz in Mexico, which is approximately 160 miles northward of the current sterile fly dispersal grid, on the eastern side of the country and 370 miles south of the U.S./Mexico border. This new northward detection comes approximately two months after northern detections were reported in Oaxaca and Veracruz, less than 700 miles away from the U.S. border, which triggered the closure of our ports to Mexican cattle, bison, and horses on May 11, 2025.
+
+While USDA announced a risk-based phased port re-opening strategy for cattle, bison, and equine from Mexico beginning as early as July 7, 2025, this newly reported NWS case raises significant concern about the previously reported information shared by Mexican officials and severely compromises the outlined port reopening schedule of five ports from July 7-September 15. Therefore, in order to protect American livestock and our nation’s food supply, Secretary Rollins has ordered the closure of livestock trade through southern ports of entry effective immediately.
+
+“The United States has promised to be vigilant — and after detecting this new NWS case, we are pausing the planned port reopening’s to further quarantine and target this deadly pest in Mexico. We must see additional progress combatting NWS in Veracruz and other nearby Mexican states in order to reopen livestock ports along the Southern border,” said U.S. Secretary of Agriculture Brooke L. Rollins. “Thanks to the aggressive monitoring by USDA staff in the U.S. and in Mexico, we have been able to take quick and decisive action to respond to the spread of this deadly pest.”
+""".strip()
+tokenizer = NanoChatTokenizer.train_from_iterator(text, 300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+
+print(tokenizer.encode('Hello') == tokenizer('Hello'))
+
+print(tokenizer('Hello I am so happy today'))
+
+print(tokenizer.decode(tokenizer("hello")))
