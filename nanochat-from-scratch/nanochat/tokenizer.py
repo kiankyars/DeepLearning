@@ -7,15 +7,6 @@ I will write pseudocode for each function before implementing it.
 I demonstrate everything through small examples.
 I'm going to do this in one take.
 
-
-PLAN:
-TOK TRAIN
-LAST TWO HELPER FUCNTIONS
-TOK EVAL
-SSH SCRIPT
-DATASET
-COMMONS
-
 """
 import regex as re
 import pickle
@@ -48,10 +39,14 @@ def merge(ids, pair, index):
     return new_ids
 
 class RegexTokenizer:
-    def __init__(self, pattern):
+    def __init__(self):
         self.vocabulary = {i: bytes([i]) for i in range(256)}
         self.merges = {}
         self.pattern = re.compile(r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+
+    def get_pattern(self):
+        return self.pattern
+
     def train(self, text, vocab_size_no_special, verbose=False):
         # encode the text
         # iterate over text, self.vocab_size - 256 times
@@ -62,33 +57,28 @@ class RegexTokenizer:
         # {256: byte_string}
         # add to self.merges = {byte_string: 256}
         number_merges = vocab_size_no_special - 256
-        
         text_chunks = re.findall(self.pattern, text)
         encoded_chunks = [list(text_chunk.encode('utf-8')) for text_chunk in text_chunks]
-        length_initial = sum([len(encoded_chunk) for encoded_chunk in encoded_chunks])
-
         for i in range(number_merges):
             pairs = {}
             for encoded_chunk in encoded_chunks:
                 get_pairs(encoded_chunk, pairs)
             pair = max(pairs, key=pairs.get)
             index = 256 + i
-            encoded_chunks = [merge(encoded_chunk, pair, index) for encoded_chunk in encoded_chunks]
+            # In-place merge
+            for j, chunk in enumerate(encoded_chunks):
+                encoded_chunks[j] = merge(chunk, pair, index)
             self.merges[pair] = index
-            self.vocabulary[index] = self.vocabulary[pair[0]] + self.vocabulary[pair[1]]
+            # self.vocabulary[index] = self.vocabulary[pair[0]] + self.vocabulary[pair[1]]
             # print(sorted([(v,k) for k,v in pairs.items()], reverse=True)[:10])
-            # return
-        print([(k,v)for k, v in  self.vocabulary.items()][355:])
-
-
+        # print([(k,v)for k, v in  self.vocabulary.items()][355:])
         if verbose:
+            length_initial = sum([len(text_chunk) for text_chunk in text_chunks])
             length_final = sum([len(encoded_chunk) for encoded_chunk in encoded_chunks])
             compression = length_initial/length_final
             print(length_initial, length_final)
             print(compression)
         # print(ids)
-        
-        
         # print(sorted([(v,k) for k,v in pairs.items()], reverse=True)[:10])
         # print(sorted(pairs.items(),reverse=True,key=lambda k: pairs[k])[:10])
         
@@ -210,7 +200,7 @@ class NanoChatTokenizer:
         return self.enc.name
 
     @classmethod
-    def train_from_iterator(cls, text, vocab_size, pattern):
+    def train_from_iterator(cls, text_iterator, vocab_size):
         # Step 1 train python tokenizer use regextokenizer, then throw it out!
         # self.merges() is all we want and need from the tokenizer training
         # Step 2 convert self.merges to mergeable_ranks
@@ -218,9 +208,10 @@ class NanoChatTokenizer:
         # but mergeable_ranks is the opposite
         # step 3. add special tokens
         # step4 create and return the tiktoken.encoding object
-        tokenizer = RegexTokenizer(pattern)
+        tokenizer = RegexTokenizer()
         vocab_size_no_special = vocab_size - len(SPECIAL_TOKENS)
         assert vocab_size_no_special >= 256
+        text = "".join(text_iterator)
         tokenizer.train(text, vocab_size_no_special)
         mergable_ranks = get_mergeable_ranks(tokenizer)
         tokens_offset = len(mergable_ranks)
@@ -230,7 +221,7 @@ class NanoChatTokenizer:
         }
         enc = tiktoken.Encoding(
             name="nanochat",
-            pat_str=pattern,
+            pat_str=tokenizer.get_pattern(),
             mergeable_ranks=mergable_ranks,
             special_tokens=special_tokens
         )
@@ -398,3 +389,23 @@ class NanoChatTokenizer:
         assistant_start = self.encode_special("<|assistant_start|>")
         ids.append(assistant_start)
         return ids
+
+from nanochat.common import get_base_dir
+def get_tokenizer():
+    # Purpose: Loads the tokenizer from the standard location (`~/.cache/nanochat/tokenizer/`). Used throughout the codebase instead of hardcoding paths.
+    base_dir = get_base_dir()
+    tokenizer_dir = os.path.join(base_dir, "tokenizer")
+    return NanoChatTokenizer.from_directory(tokenizer_dir)
+
+def get_token_bytes(device):
+    import torch
+    # Purpose: Loads a precomputed tensor `token_bytes[vocab_size]` where `token_bytes[token_id]` = number of bytes that token represents (0 for special tokens).
+
+    # This normalizes by actual byte length, so you can compare tokenizers with different vocab sizes.
+
+    # key-insight: bytes are the invariant—both tokenizers compress the same original bytes, so normalize by that.
+    base_dir = get_base_dir()
+    tokenizer_dir = os.path.join(base_dir, "tokenizer/token_bytes.pt")
+    assert os.path.exists(tokenizer_dir), "Token bytes not found…"
+    with open(tokenizer_dir, "rb") as f:
+        return torch.load(f, map_location=device)
