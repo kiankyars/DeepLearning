@@ -47,40 +47,47 @@ class RegexTokenizer:
     def get_pattern(self):
         return self.pattern
 
-    def train(self, text, vocab_size_no_special, verbose=False):
-        # encode the text
-        # iterate over text, self.vocab_size - 256 times
-        # count all of the pairs in a dictionary
-        # choose the pair with the highest frequency
-        # merge that pair as a new token
-        # add that token to the vocab
-        # {256: byte_string}
-        # add to self.merges = {byte_string: 256}
-        number_merges = vocab_size_no_special - 256
-        text_chunks = re.findall(self.pattern, text)
-        encoded_chunks = [list(text_chunk.encode('utf-8')) for text_chunk in text_chunks]
+    def train_from_iterator(self, text_iterator, vocab_size):
+        """Train from streaming iterator without loading all text into memory"""
+        from collections import Counter
+        # Step 1: Count unique chunks across all text (streaming)
+        chunk_counts = Counter()
+        for text in text_iterator:
+            chunks = re.findall(self.pattern, text)
+            chunk_counts.update(chunks)
+        # Step 2: Encode unique chunks once
+        # Counter({' The': 1, ' response': 1, ' in': 1, ' Berlin': 1, ' was': 1, ' panic': 1, '.': 1})
+        unique_chunks = list(chunk_counts.keys())
+        # [' The', ' response', ' in', ' Berlin', ' was', ' panic', '.']
+        encoded_chunks = [list(chunk.encode('utf-8')) for chunk in unique_chunks]
+        # [[32, 84, 104, 101], [32, 114, 101, 115, 112, 111, 110, 115, 101], [32, 105, 110], [32, 66, 101, 114, 108, 105, 110], [32, 119, 97, 115], [32, 112, 97, 110, 105, 99], [46]]
+        counts = [chunk_counts[chunk] for chunk in unique_chunks]
+        # The above gives the number of times that each unique chunk appears.
+        
+        # Step 3: Train on unique chunks with their counts
+        number_merges = vocab_size - 256
         for i in range(number_merges):
+            if i % 100 == 0:
+                print(f"Merge {i}/{number_merges}")
+            
+            # Count pairs weighted by chunk frequency
             pairs = {}
-            for encoded_chunk in encoded_chunks:
-                get_pairs(encoded_chunk, pairs)
+            for encoded_chunk, count in zip(encoded_chunks, counts):
+                for j in range(len(encoded_chunk) - 1):
+                    pair = (encoded_chunk[j], encoded_chunk[j+1])
+                    pairs[pair] = pairs.get(pair, 0) + count
+            
+            if not pairs:
+                break
+            
             pair = max(pairs, key=pairs.get)
             index = 256 + i
-            # In-place merge
-            for j, chunk in enumerate(encoded_chunks):
-                encoded_chunks[j] = merge(chunk, pair, index)
+            
+            # Merge in all unique chunks
+            for j in range(len(encoded_chunks)):
+                encoded_chunks[j] = merge(encoded_chunks[j], pair, index)
+            
             self.merges[pair] = index
-            # self.vocabulary[index] = self.vocabulary[pair[0]] + self.vocabulary[pair[1]]
-            # print(sorted([(v,k) for k,v in pairs.items()], reverse=True)[:10])
-        # print([(k,v)for k, v in  self.vocabulary.items()][355:])
-        if verbose:
-            length_initial = sum([len(text_chunk) for text_chunk in text_chunks])
-            length_final = sum([len(encoded_chunk) for encoded_chunk in encoded_chunks])
-            compression = length_initial/length_final
-            print(length_initial, length_final)
-            print(compression)
-        # print(ids)
-        # print(sorted([(v,k) for k,v in pairs.items()], reverse=True)[:10])
-        # print(sorted(pairs.items(),reverse=True,key=lambda k: pairs[k])[:10])
         
     def encode(self, text):
         text_chunks = re.findall(self.pattern, text)
@@ -141,21 +148,6 @@ class RegexTokenizer:
             tokenizer.pattern = data["pattern"]
         return tokenizer
 
-
-text = "Ｕｎｉｃｏｄｅ! 🅤🅝🅘🅒🅞🅓🅔‽ 🇺‌🇳‌🇮‌🇨‌🇴‌🇩‌🇪! 😄 The very name strikes fear and awe into the hearts of programmers worldwide. We all know we ought to “support Unicode” in our software (whatever that means—like using wchar_t for all the strings, right?). But Unicode can be abstruse, and diving into the thousand-page Unicode Standard plus its dozens of supplementary annexes, reports, and notes can be more than a little intimidating. I don’t blame programmers for still finding the whole thing mysterious, even 30 years after Unicode’s inception."
-
-# tokenizer = RegexTokenizer(300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
-# tokenizer.train(text, True)
-# tokenizer.save("/Users/kian/Code/DeepLearning/nanochat/tokenizer.pkl")
-# tokenizer_load = tokenizer.load("/Users/kian/Code/DeepLearning/nanochat/tokenizer.pkl")
-# print(tokenizer_load.decode(tokenizer_load.encode('are hello')))
-# tokenizer = RegexTokenizer(259, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
-# tokenizer.train(text, True)
-# print(tokenizer.encode('are hello'))
-# print(list('are hello'.encode('utf-8')))
-# print(tokenizer.merges)
-# print(tokenizer.decode([239, 188, 181, 239, 189, 142, 239, 189, 137, 239, 189, 131, 239, 189, 143, 239, 189, 132, 239, 189, 133, 33, 32, 263, 164, 263, 157, 263, 152, 263, 146, 263, 158, 263, 147, 263, 148, 258, 189]))
-
 SPECIAL_TOKENS = [
     # every document begins with the Beginning of Sequence (BOS) token that delimits documents
     "<|bos|>",
@@ -211,8 +203,7 @@ class NanoChatTokenizer:
         tokenizer = RegexTokenizer()
         vocab_size_no_special = vocab_size - len(SPECIAL_TOKENS)
         assert vocab_size_no_special >= 256
-        text = "".join(text_iterator)
-        tokenizer.train(text, vocab_size_no_special)
+        tokenizer.train_from_iterator(text_iterator, vocab_size_no_special)
         mergable_ranks = get_mergeable_ranks(tokenizer)
         tokens_offset = len(mergable_ranks)
         special_tokens = {
@@ -221,7 +212,7 @@ class NanoChatTokenizer:
         }
         enc = tiktoken.Encoding(
             name="nanochat",
-            pat_str=tokenizer.get_pattern(),
+            pat_str=tokenizer.get_pattern().pattern,
             mergeable_ranks=mergable_ranks,
             special_tokens=special_tokens
         )
