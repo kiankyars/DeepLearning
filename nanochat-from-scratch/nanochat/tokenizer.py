@@ -12,83 +12,116 @@ import regex as re
 import pickle
 import os
 import copy
+from collections import Counter
 
-def get_pairs(ids, counts):
-    for pair in zip(ids, ids[1:]):
-        counts[pair] = counts.get(pair, 0) + 1
+# -----------------------------------------------------------------------------
+# Helper Functions
+# -----------------------------------------------------------------------------
+
+def get_stats(ids_freqs):
+    """
+    Given a dictionary of {(token_ids): frequency}, compute the frequency
+    of every adjacent pair of tokens.
+    """
+    counts = {}
+    for ids, freq in ids_freqs.items():
+        for pair in zip(ids, ids[1:]):
+            counts[pair] = counts.get(pair, 0) + freq
     return counts
 
-def merge(ids, pair, index):
-    '''
-    this function will iterate over ids and every time
-    it sees a instance of pair, it will take that pair
-    and instead put index, then it will return the list
-    list = [1,2,3,4,1,2,3]
-    merge(list, (1,2), 257)
-    list = [257,3,4,257,3]
-    '''
+def merge(ids, pair, idx):
+    """
+    In the list of integers `ids`, replace all consecutive occurrences
+    of `pair` with the new token `idx`.
+    """
     new_ids = []
     i = 0
     while i < len(ids):
-        if i < len(ids) - 1 and (ids[i], ids[i+1]) == pair:
-            new_ids.append(index)
+        # if we are not at the very last element AND the pair matches
+        if i < len(ids) - 1 and ids[i] == pair[0] and ids[i+1] == pair[1]:
+            new_ids.append(idx)
             i += 2
         else:
             new_ids.append(ids[i])
             i += 1
     return new_ids
 
+# -----------------------------------------------------------------------------
+# RegexTokenizer
+# -----------------------------------------------------------------------------
+
 class RegexTokenizer:
     def __init__(self):
+        # Initialize base vocabulary (0-255)
         self.vocabulary = {i: bytes([i]) for i in range(256)}
         self.merges = {}
-        self.pattern = re.compile(r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+        # GPT-4 style regex pattern
+        self.pattern = re.compile(r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
 
     def get_pattern(self):
         return self.pattern
 
     def train_from_iterator(self, text_iterator, vocab_size):
-        """Train from streaming iterator without loading all text into memory"""
-        from collections import Counter
-        # Step 1: Count unique chunks across all text (streaming)
-        chunk_counts = Counter()
-        for text in text_iterator:
-            chunks = re.findall(self.pattern, text)
-            chunk_counts.update(chunks)
-        # Step 2: Encode unique chunks once
-        # Counter({' The': 1, ' response': 1, ' in': 1, ' Berlin': 1, ' was': 1, ' panic': 1, '.': 1})
-        unique_chunks = list(chunk_counts.keys())
-        # [' The', ' response', ' in', ' Berlin', ' was', ' panic', '.']
-        encoded_chunks = [list(chunk.encode('utf-8')) for chunk in unique_chunks]
-        # [[32, 84, 104, 101], [32, 114, 101, 115, 112, 111, 110, 115, 101], [32, 105, 110], [32, 66, 101, 114, 108, 105, 110], [32, 119, 97, 115], [32, 112, 97, 110, 105, 99], [46]]
-        counts = [chunk_counts[chunk] for chunk in unique_chunks]
-        # The above gives the number of times that each unique chunk appears.
+        """
+        Train the BPE tokenizer from an iterator of strings.
+        """
+        assert vocab_size >= 256
+        num_merges = vocab_size - 256
         
-        # Step 3: Train on unique chunks with their counts
-        number_merges = vocab_size - 256
-        for i in range(number_merges):
-            if i % 100 == 0:
-                print(f"Merge {i}/{number_merges}")
+        # 1. Ingestion: Regex split and count unique words
+        print(f"Processing iterator...")
+        word_counts = Counter()
+        
+        for text in text_iterator:
+            # Find all chunks matching the pattern
+            text_chunks = re.findall(self.pattern, text)
+            for chunk in text_chunks:
+                # Convert string chunk to UTF-8 bytes, then to a tuple of integers
+                # We use tuple so it can be a dictionary key
+                chunk_ids = tuple(chunk.encode("utf-8"))
+                word_counts[chunk_ids] += 1
+
+        print(f"Unique words identified: {len(word_counts)}")
+        print(f"Starting BPE training for {num_merges} merges...")
+
+        # 2. Training Loop
+        for i in range(num_merges):
+            # a. Compute co-occurrence stats for all pairs
+            stats = get_stats(word_counts)
             
-            # Count pairs weighted by chunk frequency
-            pairs = {}
-            for encoded_chunk, count in zip(encoded_chunks, counts):
-                for j in range(len(encoded_chunk) - 1):
-                    pair = (encoded_chunk[j], encoded_chunk[j+1])
-                    pairs[pair] = pairs.get(pair, 0) + count
-            
-            if not pairs:
+            # If no pairs are left, we can't merge anymore
+            if not stats:
                 break
             
-            pair = max(pairs, key=pairs.get)
-            index = 256 + i
+            # b. Find the most frequent pair
+            # (lexicographical tie-breaking via pair comparison handled by python max)
+            pair = max(stats, key=stats.get)
             
-            # Merge in all unique chunks
-            for j in range(len(encoded_chunks)):
-                encoded_chunks[j] = merge(encoded_chunks[j], pair, index)
+            # c. Mint the new token ID
+            idx = 256 + i
             
-            self.merges[pair] = index
-        
+            # d. Record the merge
+            self.merges[pair] = idx
+            # Optional: add to vocabulary mapping for decoding later
+            # (Reconstruct the bytes for the new token)
+            vocab_bytes = self.vocabulary[pair[0]] + self.vocabulary[pair[1]]
+            self.vocabulary[idx] = vocab_bytes
+            
+            # e. Update the counts dictionary (Apply merge)
+            # We rebuild the dictionary because keys (tuples) change
+            new_word_counts = {}
+            for ids, freq in word_counts.items():
+                # Apply the merge to this specific word
+                new_ids = merge(list(ids), pair, idx)
+                new_ids = tuple(new_ids)
+                new_word_counts[new_ids] = new_word_counts.get(new_ids, 0) + freq
+            
+            word_counts = new_word_counts
+            
+            # Simple progress logging
+            if (i + 1) % 100 == 0:
+                print(f"Merge {i + 1}/{num_merges}: {pair} -> {idx} (freq {stats[pair]})")
+
     def encode(self, text):
         text_chunks = re.findall(self.pattern, text)
         encoded_text = []
@@ -98,54 +131,64 @@ class RegexTokenizer:
         return encoded_text
     
     def _encode_chunk(self, text):
-        '''
-        self.merges is important here
-        
-        we get text, and then we convert that text to byte strings, then to integers
-        and then we iterate over the text until all pairs of merges that are
-        *** we merge the pairs in the order they were merged at training ***
-        possible under the trained tokenizer have been completed
-        '''
+        # Start with raw bytes
         ids = list(text.encode('utf-8'))
-        for pair, index in self.merges.items():
-            ids = merge(ids, pair, index)
+        # Apply merges in the order they were learned
+        # Note: In an optimized implementation, we would iterate through 
+        # the text and apply the best available pair iteratively,
+        # but iterating through the fixed merge list is the standard reference implementation.
+        while len(ids) >= 2:
+            stats = get_stats({tuple(ids): 1})
+            # Find the pair with the lowest merge index (earliest merge)
+            pair_to_merge = None
+            min_merge_idx = float('inf')
+            
+            for pair in stats:
+                if pair in self.merges:
+                    if self.merges[pair] < min_merge_idx:
+                        min_merge_idx = self.merges[pair]
+                        pair_to_merge = pair
+            
+            if pair_to_merge:
+                ids = merge(ids, pair_to_merge, min_merge_idx)
+            else:
+                break
+                
         return ids
 
-
     def decode(self, ids):
-        '''
-        decode gets ids
-        1. convert the ids to their byte strings
-        2. convert the byte strings to strings via the vocabulary
-        3. then return the decoded_text
-        .decode('utf-8')
-        [239, 256]
-        [b'xa', b'sa']
-        b'xasa'
-        output
-
-        '''
-        byte_strings = b''.join([bytes(self.vocabulary[i]) for i in ids])
-        decoded_text = byte_strings.decode('utf-8')
-        return decoded_text
+        # Filter out special tokens if they are not in self.vocabulary
+        # (Assuming standard BPE behavior, special tokens are handled outside or added to vocab)
+        byte_parts = []
+        for idx in ids:
+            if idx in self.vocabulary:
+                byte_parts.append(self.vocabulary[idx])
+            else:
+                # Fallback for debugging or special tokens not in internal vocab
+                byte_parts.append(b"") 
+        
+        byte_string = b"".join(byte_parts)
+        # errors='replace' handles cases where split unicode characters appear at boundaries
+        return byte_string.decode('utf-8', errors='replace')
 
     def save(self, path):
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             pickle.dump({
-                "merges":self.merges,
-                "vocabulary":self.vocabulary,
-                "pattern":self.pattern.pattern
-            },
-            f)
+                "merges": self.merges,
+                "vocabulary": self.vocabulary,
+                "pattern": self.pattern.pattern
+            }, f)
 
     @classmethod
     def load(cls, path):
-        tokenizer = cls(300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
+        tokenizer = cls()
         with open(path, "rb") as f:
             data = pickle.load(f)
             tokenizer.merges = data["merges"]
             tokenizer.vocabulary = data["vocabulary"]
-            tokenizer.pattern = data["pattern"]
+            tokenizer.pattern = re.compile(data["pattern"])
         return tokenizer
 
 SPECIAL_TOKENS = [
@@ -165,7 +208,7 @@ SPECIAL_TOKENS = [
 import tiktoken
 from functools import lru_cache
 
-def get_mergeable_ranks(tokenizer):
+def get_mergeable_ranks(tokenizer, verbose=True):
     # add base 256 strings
     mergeable_ranks = {}
     for i in range(256):
@@ -176,6 +219,8 @@ def get_mergeable_ranks(tokenizer):
         merges_bytes = token_bytes[pair[0]] + token_bytes[pair[1]]
         token_bytes[merged_index] = merges_bytes
         mergeable_ranks[merges_bytes] = merged_index
+        if verbose:
+            print(f"merged pair {pair} at index {merged_index}")
     return mergeable_ranks
 
 
@@ -380,6 +425,9 @@ class NanoChatTokenizer:
         assistant_start = self.encode_special("<|assistant_start|>")
         ids.append(assistant_start)
         return ids
+
+    def get_mergable_ranks(self):
+        return self.enc._mergeable_ranks
 
 from nanochat.common import get_base_dir
 def get_tokenizer():
