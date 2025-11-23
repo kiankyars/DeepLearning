@@ -1,23 +1,4 @@
 """
-Method descriptions
-
-save(self, tokenizer_dir): Saves the tiktoken.Encoding object to disk as a pickle file.
-
-# In other words load. This is just the way it's called for factory methods.
-@classmethod
-from_directory(cls, tokenizer_dir): Class method that loads a pickled tiktoken.Encoding from disk and returns a new instance.
-
-get_vocab_size(self): Returns total vocabulary size (regular tokens + special tokens).
-
-get_special_tokens(self): Returns the set of special token strings.
-
-from_pretrained(cls, tiktoken_name): Class method that loads a pretrained tiktoken encoding by name (e.g., "cl100k_base") and returns a new instance.
-
-render_conversation(self, conversation, max_tokens=2048): Tokenizes a chat conversation dict into token IDs and a training mask (1 for assistant tokens to predict, 0 otherwise).
-
-render_for_completion(self, conversation): Tokenizes a conversation for RL, removing the last assistant message and appending <|assistant_start|> to prime generation.
-
-
 SERIES PRINCIPLES
 ==========================
 
@@ -25,6 +6,15 @@ I'm doing this with you so you can learn through my own problem-solving process.
 I will write pseudocode for each function before implementing it.
 I demonstrate everything through small examples.
 I'm going to do this in one take.
+
+
+PLAN:
+TOK TRAIN
+LAST TWO HELPER FUCNTIONS
+TOK EVAL
+SSH SCRIPT
+DATASET
+COMMONS
 
 """
 import regex as re
@@ -408,47 +398,3 @@ class NanoChatTokenizer:
         assistant_start = self.encode_special("<|assistant_start|>")
         ids.append(assistant_start)
         return ids
-
-
-text = r"""
-(Washington, D.C., July 9, 2025)- Yesterday, Mexico’s National Service of Agro-Alimentary Health, Safety, and Quality (SENASICA) reported a new case of New World Screwworm (NWS) in Ixhuatlan de Madero, Veracruz in Mexico, which is approximately 160 miles northward of the current sterile fly dispersal grid, on the eastern side of the country and 370 miles south of the U.S./Mexico border. This new northward detection comes approximately two months after northern detections were reported in Oaxaca and Veracruz, less than 700 miles away from the U.S. border, which triggered the closure of our ports to Mexican cattle, bison, and horses on May 11, 2025.
-
-While USDA announced a risk-based phased port re-opening strategy for cattle, bison, and equine from Mexico beginning as early as July 7, 2025, this newly reported NWS case raises significant concern about the previously reported information shared by Mexican officials and severely compromises the outlined port reopening schedule of five ports from July 7-September 15. Therefore, in order to protect American livestock and our nation’s food supply, Secretary Rollins has ordered the closure of livestock trade through southern ports of entry effective immediately.
-
-“The United States has promised to be vigilant — and after detecting this new NWS case, we are pausing the planned port reopening’s to further quarantine and target this deadly pest in Mexico. We must see additional progress combatting NWS in Veracruz and other nearby Mexican states in order to reopen livestock ports along the Southern border,” said U.S. Secretary of Agriculture Brooke L. Rollins. “Thanks to the aggressive monitoring by USDA staff in the U.S. and in Mexico, we have been able to take quick and decisive action to respond to the spread of this deadly pest.”
-""".strip()
-
-
-
-conversation = {
-                    "messages": [
-                        {"role": "user", "content": "Hello!"},
-                        {"role": "assistant", "content": [{"type": "text", "text": "Hi there!"}, {"type": "python", "text": "askjhdbasjkldh"}]}
-                    ]
-                }
-tokenizer1 = NanoChatTokenizer.train_from_iterator(text, 300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
-
-tokenizer1.save("./nanochat")
-
-print(tokenizer1.get_vocab_size())
-
-tokenizer = NanoChatTokenizer.from_directory("./nanochat")
-
-print(tokenizer.encode('Hello') == tokenizer('Hello'))
-
-print(tokenizer('Hello I am so happy today'))
-
-print(tokenizer.decode(tokenizer("hello")))
-
-
-    
-
-gpt2= NanoChatTokenizer.from_pretrained("gpt2")
-
-print(gpt2.get_special_tokens(), gpt2.get_vocab_size())
-# print((gpt2.enc.special_tokens_set.pop()))
-# print(gpt2.encode_special(gpt2.enc.special_tokens_set.pop()))
-abc, _ = tokenizer.render_conversation(conversation)
-print(abc)
-print(tokenizer.decode(abc))
-print(tokenizer.decode(tokenizer1.render_for_completion(conversation)))
