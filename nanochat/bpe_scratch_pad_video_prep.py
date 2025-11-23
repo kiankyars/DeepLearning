@@ -74,6 +74,103 @@ conversation = {
 # System injects: "<|output_start|> 579 <|output_end|>"
 # Model continues: (sees the output, continues reasoning)
 
+def render_conversation(self, conversation, max_tokens=2048):
+        """
+        Tokenize a single Chat conversation (which we call a "doc" or "document" here).
+        Returns:
+        - ids: list[int] is a list of token ids of this rendered conversation
+        - mask: list[int] of same length, mask = 1 for tokens that the Assistant is expected to train on.
+        """
+        # ids, masks that we will return and a helper function to help build them up.
+        ids, mask = [], []
+        def add_tokens(token_ids, mask_val):
+            if isinstance(token_ids, int):
+                token_ids = [token_ids]
+            ids.extend(token_ids)
+            mask.extend([mask_val] * len(token_ids))
+
+        # sometimes the first message is a system message...
+        # => just merge it with the second (user) message
+        if conversation["messages"][0]["role"] == "system":
+            # some conversation surgery is necessary here for now...
+            conversation = copy.deepcopy(conversation) # avoid mutating the original
+            messages = conversation["messages"]
+            assert messages[1]["role"] == "user", "System message must be followed by a user message"
+            messages[1]["content"] = messages[0]["content"] + "\n\n" + messages[1]["content"]
+            messages = messages[1:]
+        else:
+            messages = conversation["messages"]
+        assert len(messages) >= 1, f"Conversation has less than 1 message: {messages}"
+
+        # fetch all the special tokens we need
+        bos = self.get_bos_token_id()
+        user_start, user_end = self.encode_special("<|user_start|>"), self.encode_special("<|user_end|>")
+        assistant_start, assistant_end = self.encode_special("<|assistant_start|>"), self.encode_special("<|assistant_end|>")
+        python_start, python_end = self.encode_special("<|python_start|>"), self.encode_special("<|python_end|>")
+        output_start, output_end = self.encode_special("<|output_start|>"), self.encode_special("<|output_end|>")
+
+        # now we can tokenize the conversation
+        add_tokens(bos, 0)
+        for i, message in enumerate(messages):
+
+            # some sanity checking here around assumptions, to prevent footguns
+            must_be_from = "user" if i % 2 == 0 else "assistant"
+            # check user vs assistant
+            assert message["role"] == must_be_from, f"Message {i} is from {message['role']} but should be from {must_be_from}"
+
+            # content can be either a simple string or a list of parts (e.g. containing tool calls)
+            content = message["content"]
+
+            if message["role"] == "user":
+                assert isinstance(content, str), "User messages are simply expected to be strings"
+                add_tokens(user_start, 0)
+                value_ids = self.encode(content)
+                add_tokens(value_ids, 0)
+                add_tokens(user_end, 0)
+                # assitant
+            elif message["role"] == "assistant":
+                # add assistant start tokens
+                add_tokens(assistant_start, 0)
+                if isinstance(content, str):
+                    # simple string => simply add the tokens
+                    value_ids = self.encode(content)
+                    add_tokens(value_ids, 1)
+                    # then we will go straight to add_tokens for assitant end, unless we have unknown content type
+                # these are the more nuanced cases
+                elif isinstance(content, list):
+                    for part in content:
+                        # for element in list
+                        value_ids = self.encode(part["text"])
+                        # encode each element
+                        if part["type"] == "text":
+                            # string part => simply add the tokens
+                            add_tokens(value_ids, 1)
+                            # if it was text, we add without any other special tokens
+                        elif part["type"] == "python":
+                            # python tool call => add the tokens inside <|python_start|> and <|python_end|>
+                            add_tokens(python_start, 1)
+                            # add python special tokens in this case
+                            add_tokens(value_ids, 1)
+                            add_tokens(python_end, 1)
+                        elif part["type"] == "python_output":
+                            # python output => add the tokens inside <|output_start|> and <|output_end|>
+                            # none of these tokens are supervised because the tokens come from Python at test time
+                            add_tokens(output_start, 0)
+                            # python output, looks like this is the python output of the python generated by the llm
+                            add_tokens(value_ids, 0)
+                            add_tokens(output_end, 0)
+                        else:
+                            raise ValueError(f"Unknown part type: {part['type']}")
+                else:
+                    raise ValueError(f"Unknown content type: {type(content)}")
+                # add assitant end tokens
+                add_tokens(assistant_end, 1)
+
+        # truncate to max_tokens tokens MAX (helps prevent OOMs)
+        ids = ids[:max_tokens]
+        mask = mask[:max_tokens]
+        return ids, mask
+
 #### **2.4 render_for_completion() (2 min)**
 
 def render_for_completion(self, conversation):

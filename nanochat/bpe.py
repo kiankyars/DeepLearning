@@ -30,6 +30,7 @@ I'm going to do this in one take.
 import regex as re
 import pickle
 import os
+import copy
 
 def get_pairs(ids, counts):
     for pair in zip(ids, ids[1:]):
@@ -211,6 +212,9 @@ class NanoChatTokenizer:
         self.enc = enc
         self.bos_token_id = self.encode_special(bos_token)
 
+    def get_bos_token_id(self):
+        return self.bos_token_id
+
     
     def __repr__(self) -> str:
         return self.enc.name
@@ -297,35 +301,114 @@ class NanoChatTokenizer:
     def get_special_tokens(self):
         return self.enc.special_tokens_set
 
+    
     def render_conversation(self, conversation, max_tokens=2048):
-        pass
-        # - Chat format: `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`
+        """
+        Tokenize a single Chat conversation (which we call a "doc" or "document" here).
+        Returns:
+        - ids: list[int] is a list of token ids of this rendered conversation
+        - mask: list[int] of same length, mask = 1 for tokens that the Assistant is expected to train on.
+        """
+        # ids, masks that we will return and a helper function to help build them up.
+        ids, mask = [], []
+        def add_tokens(token_ids, mask_val):
+            if isinstance(token_ids, int):
+                token_ids = [token_ids]
+            ids.extend(token_ids)
+            mask.extend([mask_val] * len(token_ids))
 
-        conversation = {
-            "messages": [
-                {"role": "user", "content": "Hello!"},
-                {"role": "assistant", "content": "Hi there!"}
-            ]
-        }
+        # sometimes the first message is a system message...
+        # => just merge it with the second (user) message
+        if conversation["messages"][0]["role"] == "system":
+            # some conversation surgery is necessary here for now...
+            conversation = copy.deepcopy(conversation) # avoid mutating the original
+            messages = conversation["messages"]
+            assert messages[1]["role"] == "user", "System message must be followed by a user message"
+            messages[1]["content"] = messages[0]["content"] + "\n\n" + messages[1]["content"]
+            messages = messages[1:]
+        else:
+            messages = conversation["messages"]
+        assert len(messages) >= 1, f"Conversation has less than 1 message: {messages}"
 
-        # Should produce:
-        # list= [<|bos|>, <|user_start|>, "Hello!", <|user_end|>, 
-        # <|assistant_start|>, "Hi there!", <|assistant_end|>]
-        # With mask: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0]
+        # fetch all the special tokens we need
+        bos = self.get_bos_token_id()
+        user_start, user_end = self.encode_special("<|user_start|>"), self.encode_special("<|user_end|>")
+        assistant_start, assistant_end = self.encode_special("<|assistant_start|>"), self.encode_special("<|assistant_end|>")
+        python_start, python_end = self.encode_special("<|python_start|>"), self.encode_special("<|python_end|>")
+        output_start, output_end = self.encode_special("<|output_start|>"), self.encode_special("<|output_end|>")
 
-        Model generates: <|python_start|> 'hello'.count('l') <|python_end|>
-        System executes the code: use_calculator(expr)
-        System forces the result: <|output_start|> 2 <|output_end|>
-        Model continues generating after the output
+        # now we can tokenize the conversation
+        add_tokens(bos, 0)
+        for i, message in enumerate(messages):
 
-        # Training data:
-        {"type": "python", "text": "123 + 456"}      # mask=1 (model predicts this)
-        {"type": "python_output", "text": "579"}     # mask=0 (system provides this)
+            # some sanity checking here around assumptions, to prevent footguns
+            must_be_from = "user" if i % 2 == 0 else "assistant"
+            # check user vs assistant
+            assert message["role"] == must_be_from, f"Message {i} is from {message['role']} but should be from {must_be_from}"
 
-        # At inference:
-        # Model predicts: "<|python_start|> 123 + 456 <|python_end|>"
-        # System runs it: result = 579
-        # System injects: "<|output_start|> 579 <|output_end|>"
+            # content can be either a simple string or a list of parts (e.g. containing tool calls)
+            content = message["content"]
+
+            if message["role"] == "user":
+                assert isinstance(content, str), "User messages are simply expected to be strings"
+                add_tokens(user_start, 0)
+                value_ids = self.encode(content)
+                add_tokens(value_ids, 0)
+                add_tokens(user_end, 0)
+                # assitant
+            elif message["role"] == "assistant":
+                # add assistant start tokens
+                add_tokens(assistant_start, 0)
+                if isinstance(content, str):
+                    # simple string => simply add the tokens
+                    value_ids = self.encode(content)
+                    add_tokens(value_ids, 1)
+                    # then we will go straight to add_tokens for assitant end, unless we have unknown content type
+                # these are the more nuanced cases
+                elif isinstance(content, list):
+                    for part in content:
+                        # for element in list
+                        value_ids = self.encode(part["text"])
+                        # encode each element
+                        if part["type"] == "text":
+                            # string part => simply add the tokens
+                            add_tokens(value_ids, 1)
+                            # if it was text, we add without any other special tokens
+                        elif part["type"] == "python":
+                            # python tool call => add the tokens inside <|python_start|> and <|python_end|>
+                            add_tokens(python_start, 1)
+                            # add python special tokens in this case
+                            add_tokens(value_ids, 1)
+                            add_tokens(python_end, 1)
+                        elif part["type"] == "python_output":
+                            # python output => add the tokens inside <|output_start|> and <|output_end|>
+                            # none of these tokens are supervised because the tokens come from Python at test time
+                            add_tokens(output_start, 0)
+                            # python output, looks like this is the python output of the python generated by the llm
+                            add_tokens(value_ids, 0)
+                            add_tokens(output_end, 0)
+                        else:
+                            raise ValueError(f"Unknown part type: {part['type']}")
+                else:
+                    raise ValueError(f"Unknown content type: {type(content)}")
+                # add assitant end tokens
+                add_tokens(assistant_end, 1)
+
+        # truncate to max_tokens tokens MAX (helps prevent OOMs)
+        ids = ids[:max_tokens]
+        mask = mask[:max_tokens]
+        return ids, mask
+
+    def render_for_completion(self, conservation):
+        conversation = copy.deepcopy(conservation)
+        messages = conversation["messages"]
+        assert messages[-1]["role"] == "assistant"
+        messages.pop()
+        ids, mask = self.render_conversation(conversation)
+        assistant_start = self.encode_special("<|assistant_start|>")
+        ids.append(assistant_start)
+        return ids
+
 
 text = r"""
 (Washington, D.C., July 9, 2025)- Yesterday, Mexico’s National Service of Agro-Alimentary Health, Safety, and Quality (SENASICA) reported a new case of New World Screwworm (NWS) in Ixhuatlan de Madero, Veracruz in Mexico, which is approximately 160 miles northward of the current sterile fly dispersal grid, on the eastern side of the country and 370 miles south of the U.S./Mexico border. This new northward detection comes approximately two months after northern detections were reported in Oaxaca and Veracruz, less than 700 miles away from the U.S. border, which triggered the closure of our ports to Mexican cattle, bison, and horses on May 11, 2025.
@@ -334,6 +417,15 @@ While USDA announced a risk-based phased port re-opening strategy for cattle, bi
 
 “The United States has promised to be vigilant — and after detecting this new NWS case, we are pausing the planned port reopening’s to further quarantine and target this deadly pest in Mexico. We must see additional progress combatting NWS in Veracruz and other nearby Mexican states in order to reopen livestock ports along the Southern border,” said U.S. Secretary of Agriculture Brooke L. Rollins. “Thanks to the aggressive monitoring by USDA staff in the U.S. and in Mexico, we have been able to take quick and decisive action to respond to the spread of this deadly pest.”
 """.strip()
+
+
+
+conversation = {
+                    "messages": [
+                        {"role": "user", "content": "Hello!"},
+                        {"role": "assistant", "content": [{"type": "text", "text": "Hi there!"}, {"type": "python", "text": "askjhdbasjkldh"}]}
+                    ]
+                }
 tokenizer1 = NanoChatTokenizer.train_from_iterator(text, 300, r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+""")
 
 tokenizer1.save("./nanochat")
@@ -356,3 +448,7 @@ gpt2= NanoChatTokenizer.from_pretrained("gpt2")
 print(gpt2.get_special_tokens(), gpt2.get_vocab_size())
 # print((gpt2.enc.special_tokens_set.pop()))
 # print(gpt2.encode_special(gpt2.enc.special_tokens_set.pop()))
+abc, _ = tokenizer.render_conversation(conversation)
+print(abc)
+print(tokenizer.decode(abc))
+print(tokenizer.decode(tokenizer1.render_for_completion(conversation)))
