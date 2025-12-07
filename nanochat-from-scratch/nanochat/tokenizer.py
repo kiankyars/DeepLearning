@@ -1,13 +1,3 @@
-"""
-SERIES PRINCIPLES
-==========================
-
-I'm doing this with you so you can learn through my own problem-solving process.
-I will write pseudocode for each function before implementing it.
-I demonstrate everything through small examples.
-I'm going to do this in one take.
-
-"""
 import regex as re
 import pickle
 import os
