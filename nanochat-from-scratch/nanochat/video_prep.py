@@ -28,33 +28,26 @@ def norm(x):
     # mean across all model dims and normalizes each token by that
     return F.rms_norm(x, (x.size(-1),))
 
-def apply_rope(x, rope):
+def apply_rope(x, cos, sin):
     """
-    x:   (b, n, dim)
-    rope: (b, n, dim/2, 2, 2)
-    returns rotated x, same shape (b, n, dim)
+    Apply rotary positional embeddings (RoPE) to a multi-head tensor.
+    Args:
+        x:   (batch, seq_len, n_heads, dim), dim must be divisible by 2
+        cos/sin: (1 or batch, seq_len, 1, dim // 2)
+    Returns:
+        (batch, seq_len, n_heads, dim): tensor with RoPE applied
     """
-    b, n, _ = x.shape
-    # reshape x → (b, n, half, 2)
-    x2 = x.view(b, n, -1, 2)
+    assert x.ndim == 4
+    b, seq_len, n_heads, dim = x.shape
+    assert dim % 2 == 0, "dim must be divisible by 2"
+    x_reshaped = x.view(b, seq_len, n_heads, dim // 2, 2)   # (..., pair, 2)
+    x_even = x_reshaped[..., 0]  # (..., pair)
+    x_odd  = x_reshaped[..., 1]  # (..., pair)
+    y_even = x_even * cos - x_odd * sin
+    y_odd  = x_even * sin + x_odd * cos
 
-    # apply 2×2 rotation:
-    x0 = x2[..., 0]   # (b,n,half)
-    x1 = x2[..., 1]   # (b,n,half)
-
-    r00 = rope[..., 0, 0]
-    r01 = rope[..., 0, 1]
-    r10 = rope[..., 1, 0]
-    r11 = rope[..., 1, 1]
-
-    y0 = r00 * x0 + r01 * x1
-    y1 = r10 * x0 + r11 * x1
-
-    # combine back to dim
-    y = torch.stack([y0, y1], dim=-1).reshape(b, n, -1)
-
+    y = torch.stack((y_even, y_odd), dim=-1).reshape(b, seq_len, n_heads, dim)
     return y
-
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx) -> None:

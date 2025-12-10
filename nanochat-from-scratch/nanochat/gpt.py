@@ -104,12 +104,38 @@ class GPT(nn.Module):
         self.wte = nn.Embedding(config.vocab_size, config.emb_dim)
         self.blocks = [Block(config, layer_idx) for layer_idx in range(config.n_layer)]
         self.lm_head(config.seq_len, config.vocab_size, bias=False)
+        cos, sin = self._precompute_rotary_embeddings(config.seq_len*10, config.head_dim)
+        self.register_buffer("cos", cos, persistent=True)
+        self.register_buffer("sin", sin, persistent=True)
 
     def forward(self):
         pass
 
     def get_device(self):
         return self.wte.weight.device
+
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000, device=None):
+        if device is None:
+            device = self.get_device()
+        # stride over the channels
+        # omega = 1/(theta^(2k/d))
+        # 0, 2… 128
+        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+        # shape = (64)
+        inv_freq = 1.0 / (base**(2*channel_range/head_dim))
+        # shape = (seq_len)
+        token_index = torch.arange(seq_len, dtype=torch.float32, device=device)
+        # shape = (seq_len x head_dim/2)
+        freqs = torch.outer(token_index, inv_freq)
+        cos, sin = torch.cos(freqs), torch.sin(freqs)
+        # shape = (seq_len x head_dim/2)
+        # shape = (b x seq_len x head_dim/2)
+        cos, sin = cos.bfloat16(), sin.bfloat16()
+        cos = torch.unsqueeze(torch.unsqueeze(cos, 0), 2)
+        sin = torch.unsqueeze(torch.unsqueeze(sin, 0), 2)
+        # shape = (1 x seq_len x 1 x head_dim/2)
+        return cos, sin
+
 
     @torch.inference_mode
     def generate(self, tokens, max_tokens, temperature=1, top_k=None, seed=42):
