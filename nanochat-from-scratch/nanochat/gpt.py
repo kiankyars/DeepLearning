@@ -29,6 +29,7 @@ from turtle import forward
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from nanochat.common import get_dist_info
 from nanochat.muon import Muon, DistMuon
@@ -45,6 +46,7 @@ class GPTConfig:
     emb_dim = 768
     head_dim = emb_dim / n_head
 
+@torch.compile
 def RMS(x, epsilon):
     # x = B x seq_len x emb_dim
     # x_denominator = B x seq_len x 1
@@ -52,15 +54,28 @@ def RMS(x, epsilon):
     # sum(x_0^^2…x_n^^2)
     return x / torch.sqrt(torch.mean(x**2, dim=-1, keepdim=True)+epsilon)
 
+@torch.compile
 def relu(x):
     # x = B x seq_len x emb_dim
     # for i in range(len(x[-1]))
-    return x
+    return x * (x > 0)
 
 
 class CasualSelfAttention(nn.Module):
     def __init__(self, config, layer_idx) -> None:
         super().__init__()
+        self.layer_idx = layer_idx
+        self.n_head = config.n_head
+        self.model_dim = config.model_dim
+        self.head_dim = self.model_dim // self.n_head
+        self.n_kv_head = config.n_kv_head
+        assert self.model_dim % self.n_head == 0
+        assert self.n_kv_head <= self.n_head
+        assert self.n_head % self.n_kv_head == 0
+        self.q = nn.Linear(self.model_dim,self.n_head*self.head_dim, bias=False)
+        self.k = nn.Linear(self.model_dim,self.n_head*self.head_dim, bias=False)
+        self.v = nn.Linear(self.model_dim,self.n_head*self.head_dim, bias=False)
+        self.proj = nn.Linear(self.model_dim, self.model_dim, bias=False)
 
 class MLP(nn.Module):
     def __init__(self, config) -> None:
@@ -85,7 +100,42 @@ class Block(nn.Module):
 class GPT(nn.Module):
     def __init__(self, config) -> None:
         super().__init__()
-        self.config
+        self.config = config
         self.wte = nn.Embedding(config.vocab_size, config.emb_dim)
         self.blocks = [Block(config, layer_idx) for layer_idx in range(config.n_layer)]
         self.lm_head(config.seq_len, config.vocab_size, bias=False)
+
+    def forward(self):
+        pass
+
+    def get_device(self):
+        return self.wte.weight.device
+
+    @torch.inference_mode
+    def generate(self, tokens, max_tokens, temperature=1, top_k=None, seed=42):
+        assert isinstance(tokens, list)
+        device = self.get_device()
+        rng = None
+        if temperature > 0:
+            rng = torch.Generator(device=device)
+            rng.manual_seed(seed)
+        ids = torch.tensor([tokens], dtype=torch.long, device=device)
+        for _ in range(max_tokens):
+            # x = seq_len x emb_dim
+            # emb_dim x vocab_size
+            logits = self.forward(ids)
+            # Batch x seq_len x vocab_size
+            logits = logits[:, -1, :]
+            if top_k is not None:
+                # Batch x 1 x k
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits = torch.where(logits < v[:, [-1]], -float('inf'), logits)
+            if temperature > 0:
+                logits = logits / temperature
+                probs = F.softmax(logits, dim=-1)
+                next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
+            else:
+                next_ids = torch.argmax(logits, dim=-1, keepdim=True)
+            ids = torch.cat((ids, next_ids), 1)
+            token = next_ids.item()
+            yield token
